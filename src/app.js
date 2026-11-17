@@ -3,7 +3,9 @@
 
   const E = window.SoftneerEngine;
   const CAD = window.SoftneerCAD;
-  const { tools, articles } = window.SoftneerContent;
+  const { tools: baseTools, articles } = window.SoftneerContent;
+  const advanced = window.SoftneerAdvanced.tools;
+  const tools = { ...baseTools, ...advanced };
   const Draw = window.SoftneerDraw;
   const main = document.getElementById('main');
   const nav = document.getElementById('navigation');
@@ -14,6 +16,7 @@
   const searchInput = document.getElementById('search-input');
   const toast = document.getElementById('toast');
   const storagePrefix = 'softneer.v1.';
+  const storageFallback = new Map();
   const extras = {
     handbook: { nav: 'Инженерный справочник', name: 'Инженерный справочник', group: 'База знаний', icon: 'book' },
     catalog: { nav: 'Каталог STEP', name: 'Библиотека STEP', group: 'База знаний', icon: 'cube' }
@@ -63,7 +66,9 @@
   };
 
   const groups = [
-    ['Расчёты', ['gear', 'fits', 'stack', 'bearing', 'spline', 'fatigue', 'hydraulic']],
+    ['Системы передач', ['gearbox', 'gear', 'helical', 'tooth', 'shaft', 'bearing', 'spline', 'fatigue']],
+    ['Допуски и посадки', ['fits', 'stack']],
+    ['Гидравлика', ['pipeline', 'pump', 'hydrostat', 'orifice', 'venturi', 'slit', 'bend', 'hammer', 'hydrodrive', 'hydraulic', 'turbine', 'converter']],
     ['Моделирование', ['motion']],
     ['База знаний', ['handbook', 'catalog']]
   ];
@@ -92,11 +97,15 @@
   document.getElementById('global-search').setAttribute('aria-label', 'Поиск по разделам');
 
   function read(key) {
+    if (storageFallback.has(key)) return storageFallback.get(key);
     try { return JSON.parse(localStorage.getItem(storagePrefix + key)); } catch { return null; }
   }
 
   function write(key, payload) {
-    try { localStorage.setItem(storagePrefix + key, JSON.stringify(payload)); } catch { /* Browser storage is optional. */ }
+    try {
+      localStorage.setItem(storagePrefix + key, JSON.stringify(payload));
+      storageFallback.delete(key);
+    } catch { storageFallback.set(key, structuredClone(payload)); }
   }
 
   function announce(message) {
@@ -126,6 +135,12 @@
     return data;
   }
 
+  function validRowCount(data, definition) {
+    if (!Array.isArray(data) || !data.every(row => row && typeof row === 'object' && !Array.isArray(row))) return false;
+    if (definition.fixed) return data.length === definition.defaults.length;
+    return data.length >= (definition.min ?? 1) && data.length <= (definition.max ?? 24);
+  }
+
   function field(def, value, rowIndex, rowLabel) {
     const id = rowIndex === undefined ? `field-${def.key}` : `field-${rowIndex}-${def.key}`;
     const label = rowIndex === undefined ? def.label : `${rowLabel}, строка ${rowIndex + 1}`;
@@ -135,16 +150,17 @@
       : `<input ${prop} type="text" inputmode="decimal" value="${text(value)}" autocomplete="off" spellcheck="false">`;
     const shell = `<div class="field-shell">${input}${def.unit ? `<span>${text(def.unit)}</span>` : ''}</div>`;
     return rowIndex === undefined
-      ? `<div class="field${def.wide ? ' form-wide' : ''}"${def.mode ? ` data-mode="${def.mode}"` : ''}><label for="${id}">${text(label)}</label>${shell}</div>`
+      ? `<div class="field${def.wide ? ' form-wide' : ''}"${def.mode ? ` data-mode="${def.mode}" data-mode-key="${def.modeKey || 'mode'}"` : ''}><label for="${id}">${text(label)}</label>${shell}</div>`
       : shell;
   }
 
   function rowMarkup() {
-    const { labels, fields } = state.tool.rows;
-    return `<div class="table-wrap"><table class="edit-table"><thead><tr>${labels.map(label => `<th scope="col">${label}</th>`).join('')}<th scope="col" aria-label="Действия"></th></tr></thead>
-      <tbody>${state.raw.rows.map((row, i) => `<tr>${fields.map((def, j) => `<td>${field(def, row[def.key], i, labels[j])}</td>`).join('')}
-      <td><button type="button" class="icon-button" data-action="delete-row" data-index="${i}" aria-label="Удалить строку ${i + 1}"${state.raw.rows.length < 2 ? ' disabled' : ''}>${svg('trash')}</button></td></tr>`).join('')}</tbody></table></div>
-      <div class="form-actions"><button type="button" class="button" data-action="add-row"${state.raw.rows.length >= 24 ? ' disabled' : ''}>${mark('plus')}Добавить строку</button></div>`;
+    const { labels, fields, names, fixed, min = 1, max = 24 } = state.tool.rows;
+    const data = state.raw.rows;
+    const actions = (i) => `<td><button type="button" class="icon-button" data-action="delete-row" data-index="${i}" aria-label="Удалить строку ${i + 1}"${data.length <= min ? ' disabled' : ''}>${svg('trash')}</button></td>`;
+    return `<div class="table-wrap"><table class="edit-table${fixed ? ' fixed' : ''}${fields.length >= 5 ? ' wide-table' : ''}"><thead><tr>${names ? '<th scope="col">Элемент</th>' : ''}${labels.map(label => `<th scope="col">${label}</th>`).join('')}${fixed ? '' : '<th scope="col" aria-label="Действия"></th>'}</tr></thead>
+      <tbody>${data.map((row, i) => `<tr>${names ? `<th scope="row">${names[i]}</th>` : ''}${fields.map((def, j) => `<td>${field(def, row[def.key], i, labels[j])}</td>`).join('')}${fixed ? '' : actions(i)}</tr>`).join('')}</tbody></table></div>
+      ${fixed ? '' : `<div class="form-actions"><button type="button" class="button" data-action="add-row"${data.length >= max ? ' disabled' : ''}>${mark('plus')}Добавить строку</button></div>`}`;
   }
 
   function tabButtons(pairs, current, action) {
@@ -175,23 +191,27 @@
     const defaults = defaultInput(tool);
     const saved = read(id);
     const raw = { ...defaults, ...(saved && typeof saved === 'object' ? saved : {}) };
-    if (tool.rows && (!Array.isArray(raw.rows) || raw.rows.length < 1 || raw.rows.length > 24)) raw.rows = defaults.rows;
-    const [plotTitle, plotCaption] = captions[id];
+    if (tool.rows && !validRowCount(raw.rows, tool.rows)) raw.rows = defaults.rows;
+    const [plotTitle, plotCaption] = tool.plot || captions[id];
     const controls = plotControls(id);
+    const actions = tool.actions || (id === 'gear' ? [['strength-transfer', 'Прочность зубьев', 'gear']] : []);
     state = { id, tool, raw, view: 'pair', theta: 45, playing: false };
     main.innerHTML = `<div class="page">
       ${pageHeader(tool, tool.subtitle, button('report', 'Скачать отчёт', 'download'))}
       <div class="metrics" id="metrics" aria-label="Основные результаты"></div>
-      <div class="workspace">
+      <div class="workspace${tool.wide ? ' wide-form' : ''}">
         <section class="panel">
           <div class="panel-head">${sectionHeading('input', 'Исходные данные')}
             ${button('reset', 'Сброс', 'refresh')}</div>
           <div class="panel-body">
             <form id="parameters" novalidate>
               <div class="form-grid">${tool.fields.map(def => field(def, raw[def.key])).join('')}</div>
+              ${id === 'pump' ? '<div class="linked-note" id="linked-note" hidden></div>' : ''}
               ${tool.rows ? `<div id="row-editor">${rowMarkup()}</div>` : ''}
               <p class="form-note">${tool.note}</p>
-              <div class="form-actions"><button class="button primary" type="submit">${mark('activity')}Рассчитать</button></div>
+              <div class="form-actions"><button class="button primary" type="submit">${mark('activity')}Рассчитать</button>
+                ${id === 'gearbox' ? '<select class="button" id="transfer-stage" aria-label="Ступень для передачи данных"></select>' : ''}
+                ${actions.map(([action, label, icon]) => button(action, label, icon, 'transfer-button')).join('')}</div>
             </form>
             <div class="notice" id="calc-notice" role="status"></div>
           </div>
@@ -230,17 +250,24 @@
 
   function parseInput() {
     const { raw, tool, id } = state;
-    const input = Object.fromEntries(tool.fields.filter(def => !def.mode || def.mode === raw.mode)
+    const input = Object.fromEntries(tool.fields.filter(def => !def.mode || def.mode === raw[def.modeKey || 'mode'])
       .map(def => [def.key, parseField(raw[def.key], def)]));
     if (tool.rows) input.rows = raw.rows.map(row => Object.fromEntries(tool.rows.fields.map(def => [def.key, parseField(row[def.key], def)])));
     if (id === 'motion') input.theta = state.theta;
+    if (id === 'pump' && input.system === 'network' && raw.linkedNetwork) input.network = raw.linkedNetwork;
     return input;
   }
 
   function updateModes() {
     main.querySelectorAll('[data-mode]').forEach(field => {
-      field.hidden = field.dataset.mode !== state.raw.mode;
+      field.hidden = field.dataset.mode !== state.raw[field.dataset.modeKey];
     });
+    const note = main.querySelector('#linked-note');
+    if (note) {
+      const network = state.raw.linkedNetwork;
+      note.hidden = state.raw.system !== 'network' || !network;
+      if (!note.hidden) note.textContent = `Зафиксировано участков: ${network.rows.length}. ν = ${format(network.viscosity, 4)} мм²/с. Для обновления повторно передайте сеть.`;
+    }
   }
 
   function evaluate({ frame = false } = {}) {
@@ -307,11 +334,15 @@
   }
 
   function table(headings, rows) {
-    return `<table><thead><tr>${headings.map((name, i) => `<th scope="col"${i ? ' class="num"' : ''}>${text(name)}</th>`).join('')}</tr></thead>
+    return `<table class="data-table"><thead><tr>${headings.map((name, i) => `<th scope="col"${i ? ' class="num"' : ''}>${text(name)}</th>`).join('')}</tr></thead>
       <tbody>${rows.map(row => `<tr>${row.map((value, i) => `<td${i ? ' class="num"' : ''}>${text(typeof value === 'number' ? format(value, 5) : value)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
   }
 
   function detailsMarkup(id, r, input) {
+    if (state.tool.detail) {
+      const grid = state.tool.detail(r, input);
+      return table(grid.headings, grid.rows);
+    }
     switch (id) {
       case 'gear': {
         const pairRows = [
@@ -350,12 +381,25 @@
 
   function redrawPlot() {
     const canvas = document.getElementById('plot');
-    if (canvas && state.tool) Draw.plot(canvas, state.id, state.result, state.input, state);
+    if (!canvas || !state.tool) return;
+    if (state.result && state.tool.chart) Draw.chart(canvas, state.tool.chart(state.result, state.input));
+    else Draw.plot(canvas, state.id, state.result, state.input, state);
   }
 
   function updateButtons() {
     const report = main.querySelector('[data-action=report]');
     if (report) report.disabled = !state.result;
+    main.querySelectorAll('.transfer-button').forEach(button => { button.disabled = !state.result; });
+    const stage = main.querySelector('#transfer-stage');
+    if (stage) {
+      const count = state.result?.stages.length ?? 0;
+      stage.disabled = count === 0;
+      if (stage.options.length !== count) {
+        const prior = Number(stage.value);
+        stage.replaceChildren(...Array.from({ length: count }, (_, i) => new Option(`Ступень ${i + 1}`, i + 1)));
+        if (count > 0) stage.value = Math.min(prior || count, count);
+      }
+    }
     const dxf = main.querySelector('[data-action=dxf]');
     if (dxf) dxf.disabled = state.view === 'pair' ? !state.profiles.pinion || !state.profiles.wheel : !state.profiles[state.view];
   }
@@ -372,12 +416,60 @@
     setTimeout(() => URL.revokeObjectURL(url), 30000);
   }
 
+  function exportProject() {
+    const data = Object.fromEntries(Object.entries(tools).map(([id, tool]) => [id, { ...defaultInput(tool), ...read(id) }]));
+    const current = Object.hasOwn(tools, state.id) ? state.id : 'gearbox';
+    download(JSON.stringify({ format: 'softneer-project', version: 1, current, calculations: data }, null, 2), 'project.softneer.json', 'application/json');
+  }
+
+  function projectFields(definitions, data, defaults) {
+    return Object.fromEntries(definitions.map(def => {
+      const raw = data[def.key];
+      const allowed = (typeof raw === 'string' && raw.length <= 120) || Number.isFinite(raw);
+      return [def.key, allowed ? raw : defaults[def.key]];
+    }));
+  }
+
+  async function importProject(file) {
+    try {
+      if (file.size > 256 * 1024) throw new Error('Файл проекта превышает 256 КБ.');
+      const data = JSON.parse(await file.text());
+      if (!data || data.format !== 'softneer-project' || data.version !== 1 || !data.calculations || typeof data.calculations !== 'object') {
+        throw new Error('Выберите файл расчётов Softneer формата 1.');
+      }
+      const drafts = Object.entries(tools).flatMap(([id, tool]) => {
+        const source = data.calculations[id];
+        if (!source || typeof source !== 'object') return [];
+        const defaults = defaultInput(tool);
+        const draft = projectFields(tool.fields, source, defaults);
+        if (tool.rows) draft.rows = validRowCount(source.rows, tool.rows)
+          ? source.rows.map((row, i) => projectFields(tool.rows.fields, row, defaults.rows[i] || defaults.rows[0]))
+          : defaults.rows;
+        if (id === 'pump' && source.linkedNetwork && validRowCount(source.linkedNetwork.rows, tools.pipeline.rows)) {
+          const network = source.linkedNetwork;
+          const rows = network.rows.map(row => Object.fromEntries(tools.pipeline.rows.fields.map(def => [def.key, parseField(row[def.key], def)])));
+          const viscosity = parseField(network.viscosity, { key: 'viscosity' });
+          if (Number.isFinite(viscosity) && rows.every(row => Object.values(row).every(Number.isFinite))) draft.linkedNetwork = { rows, viscosity };
+        }
+        return [[id, draft]];
+      });
+      if (!drafts.length) throw new Error('В файле нет поддерживаемых модулей расчёта.');
+      drafts.forEach(([id, draft]) => write(id, draft));
+      const current = Object.hasOwn(tools, data.current) ? data.current : drafts[0][0];
+      if (location.hash === '#' + current) route();
+      else location.hash = current;
+      announce(`Загружены исходные данные разделов: ${drafts.length}.`);
+    } catch (error) {
+      announce(error instanceof SyntaxError ? 'Файл проекта не содержит корректный JSON.' : error.message);
+    }
+  }
+
   function report() {
     if (!state.result) return;
     const { input, metrics, result, tool, id } = state;
     const clean = Object.fromEntries(Object.entries(result).filter(([key]) => !['warnings'].includes(key)));
     const report = {
-      version: '0.1.0', versionMethod: 1, module: id, name: tool.name,
+      version: '0.2.0', versionMethod: 1, module: id, name: tool.name,
       createdAt: new Date().toISOString(),
       input,
       inputUnits: Object.fromEntries(tool.fields.filter(item => item.unit && item.key in input).map(item => [item.key, item.unit])),
@@ -618,7 +710,7 @@
 
   function route() {
     const [path, target] = location.hash.slice(1).split('/');
-    const id = Object.hasOwn(pages, path) ? path : 'gear';
+    const id = Object.hasOwn(pages, path) ? path : location.protocol === 'softneer:' ? 'gearbox' : 'gear';
     const page = pages[id];
     stopMotion();
     if (resizeObserver) resizeObserver.disconnect();
@@ -646,6 +738,9 @@
       }
       case 'report': report(); break;
       case 'dxf': exportDxf(); break;
+      case 'strength-transfer':
+      case 'shaft-transfer':
+      case 'pump-transfer': transfer(action); break;
       case 'gear-view':
         state.view = value;
         main.querySelectorAll('[data-action=gear-view]').forEach(tab => tab.setAttribute('aria-pressed', String(tab === control)));
@@ -688,6 +783,41 @@
     }
   }
 
+  function transfer(action) {
+    if (!state.result) return;
+    if (action === 'pump-transfer') {
+      const { density, viscosity, staticHead, rows } = state.input;
+      write('pump', { ...defaultInput(tools.pump), ...read('pump'), density, staticHead,
+        system: 'network', linkedNetwork: { viscosity, rows } });
+      location.hash = 'pump';
+      announce('Геометрия трубопроводов передана в расчёт насоса');
+      return;
+    }
+    const selected = main.querySelector('#transfer-stage');
+    const index = selected ? Number(selected.value) - 1 : -1;
+    const stage = state.result.stages?.at(index);
+    if (action === 'strength-transfer') {
+      const ft = stage?.ft ?? state.result.ftReference ?? state.result.ft;
+      if (ft <= 0) { announce('Для расчёта прочности задайте ненулевую нагрузку'); return; }
+      const patch = { ft, ratio: stage?.ratio ?? state.result.ratio,
+        diameter: stage?.d1 ?? state.result.pinion.radius * 2,
+        module: stage ? state.input.rows[index].module : state.input.module };
+      if (state.id === 'helical') patch.width = state.input.width;
+      write('tooth', { ...defaultInput(tools.tooth), ...read('tooth'), ...patch });
+      location.hash = 'tooth';
+      announce('Геометрия и окружная сила переданы. Проверьте коэффициенты прочности.');
+      return;
+    }
+    const shaft = { ...defaultInput(tools.shaft), ...read('shaft') };
+    const span = parseField(shaft.span, tools.shaft.fields[0]);
+    shaft.rows = [{ x: (span > 0 ? span : 180) / 2, fy: -stage.ft, fz: -stage.fr }];
+    shaft.torque = stage.torqueOut;
+    shaft.rpm = stage.nOut;
+    write('shaft', shaft);
+    location.hash = 'shaft';
+    announce('Нагрузка приложена в середине вала. Уточните координату и знаки сил.');
+  }
+
   main.addEventListener('click', event => {
     const control = event.target.closest('[data-action]');
     if (control) handleAction(control);
@@ -727,6 +857,24 @@
     if (event.target.closest('a')) closeNav();
   });
   document.getElementById('global-search').addEventListener('click', openSearch);
+  const projectMenu = document.getElementById('project-menu');
+  const projectInput = document.getElementById('project-input');
+  document.getElementById('project-open').addEventListener('click', () => {
+    projectMenu.open = false;
+    projectInput.click();
+  });
+  document.getElementById('project-save').addEventListener('click', () => {
+    projectMenu.open = false;
+    exportProject();
+  });
+  projectInput.addEventListener('change', () => {
+    const file = projectInput.files[0];
+    projectInput.value = '';
+    if (file) importProject(file);
+  });
+  document.addEventListener('click', event => {
+    if (projectMenu.open && !projectMenu.contains(event.target)) projectMenu.open = false;
+  });
   document.getElementById('search-close').addEventListener('click', () => searchDialog.close());
   searchInput.addEventListener('input', renderSearch);
   searchInput.addEventListener('keydown', event => {

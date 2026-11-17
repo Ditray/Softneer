@@ -5,12 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#101e2c">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="description" content="Softneer — инженерные расчёты, справочник и каталог STEP.">
   <title>Softneer — инженерная среда</title>
   <link rel="stylesheet" href="styles.css">
   <script defer src="src/engine.js"></script>
+  <script defer src="src/hydro.js"></script>
+  <script defer src="src/drivetrain.js"></script>
   <script defer src="src/cad.js"></script>
   <script defer src="src/content.js"></script>
+  <script defer src="src/advanced.js"></script>
   <script defer src="src/draw.js"></script>
   <script defer src="src/app.js"></script>
 </head>
@@ -22,12 +26,20 @@
       <span><strong>Softneer<span class="brand-period">.</span></strong><small>ИНЖЕНЕРНАЯ СРЕДА</small></span>
     </a>
     <nav id="navigation"></nav>
-    <div class="sidebar-footer"><span class="status-dot"></span> Локальная версия <span class="version">0.1</span></div>
+    <div class="sidebar-footer"><span class="status-dot"></span> Локальная версия <span class="version">0.2</span></div>
   </aside>
   <header class="topbar">
     <button class="icon-button mobile-menu" id="menu-toggle" type="button" aria-label="Меню" aria-expanded="false" aria-controls="sidebar" data-icon="menu"></button>
     <div id="breadcrumb" class="breadcrumb"></div>
     <button class="search-button" id="global-search" type="button"><span data-icon="search"></span><span>Поиск по разделам</span><kbd>⌘ K</kbd></button>
+    <details class="project-menu" id="project-menu">
+      <summary class="button"><span data-icon="layers"></span>Проект</summary>
+      <div class="project-actions panel">
+        <button type="button" class="button" id="project-open"><span data-icon="upload"></span>Открыть расчёты</button>
+        <button type="button" class="button" id="project-save"><span data-icon="download"></span>Сохранить расчёты</button>
+      </div>
+    </details>
+    <input type="file" id="project-input" accept=".json,application/json" hidden>
   </header>
   <main id="main" class="main" tabindex="-1"></main>
   <dialog id="search-dialog" class="dialog" aria-labelledby="search-title">

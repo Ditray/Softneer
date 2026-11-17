@@ -327,5 +327,75 @@
     });
   }
 
-  root.SoftneerDraw = { plot, catalogPreview };
+  function chart(canvas, spec) {
+    drawCanvas(canvas, (ctx, w, h) => {
+      const { bars, series = [], point, integerX } = spec;
+      const coordinates = bars ? bars.map((bar, i) => [i, bar.value]) : series.flatMap(([, points]) => points);
+      const lo = bars ? -.5 : Math.min(...coordinates.map(([x]) => x));
+      const hi = bars ? bars.length - .5 : Math.max(...coordinates.map(([x]) => x));
+      const values = [...coordinates.map(([, y]) => y), ...(bars ? [0] : []), ...(spec.minY !== undefined ? [spec.minY] : [])];
+      const low = Math.min(...values);
+      const high = Math.max(...values);
+      const bottom = h - 42;
+      const left = w < 360 ? 50 : 61;
+      const right = w - 25;
+      const top = 49;
+      const height = high > low ? (high - low) * 1.09 : Math.max(1e-7, Math.abs(high) * .15);
+      const px = value => left + (value - lo) / Math.max(1e-9, hi - lo) * (right - left);
+      const py = value => bottom - (value - low) / height * (bottom - top);
+      const shades = [blue, orange, '#95deb5', '#c8a6f0'];
+      const formatTick = value => Math.abs(value) >= 1e4 || (value !== 0 && Math.abs(value) < .01)
+        ? value.toExponential(1).replace('.', ',') : fmt(value, 2);
+
+      for (let i = 0; i <= 4; i++) {
+        const value = low + (high - low) * i / 4;
+        if (high === low && i > 0) break;
+        line(ctx, [[left, py(value)], [right, py(value)]], '#42617b', .75, [4, 4]);
+        label(ctx, formatTick(value), left - 6, py(value) + 3, muted, 'right', 9);
+      }
+      line(ctx, [[left, top], [left, bottom], [right, bottom]], '#7b9cba', .9);
+      label(ctx, spec.y, left, top - 9, ink);
+
+      if (bars) {
+        const spacing = (right - left) / bars.length;
+        const width = Math.max(3, Math.min(spacing * .63, 53));
+        const axis = py(0);
+        if (low < 0) line(ctx, [[left, axis], [right, axis]], '#7b9cba', .85);
+        bars.forEach(({ label: name, value }, i) => {
+          const color = shades[i % shades.length];
+          const y = py(value);
+          ctx.fillStyle = color;
+          ctx.fillRect(px(i) - width / 2, Math.min(y, axis), width, Math.max(1, Math.abs(axis - y)));
+          if (spacing >= 19) {
+            const limit = Math.max(2, Math.floor(spacing / 6.1));
+            label(ctx, name.length > limit ? name.slice(0, limit - 1) + '…' : name, px(i), bottom + 16, ink, 'center', 9);
+          }
+          if (spacing >= 44) label(ctx, formatTick(value), px(i), value >= 0 ? y - 5 : y + 12, color, 'center', 9);
+        });
+      } else {
+        const ticks = integerX ? Math.max(1, hi - lo) : w < 350 ? 3 : 4;
+        for (let i = 0; i <= ticks; i++) {
+          if (integerX && ticks > 6 && i % 2 && i !== ticks) continue;
+          const value = lo + (hi - lo) * i / ticks;
+          line(ctx, [[px(value), bottom], [px(value), bottom + 4]], '#7b9cba');
+          label(ctx, formatTick(value), px(value), bottom + 16, muted, 'center', 9);
+        }
+        let legend = left + 62;
+        series.forEach(([name, points], index) => {
+          const color = shades[index % shades.length];
+          const plotted = points.map(([x, y]) => [px(x), py(y)]);
+          line(ctx, plotted, color, 2);
+          if (integerX) plotted.forEach(([x, y]) => circle(ctx, x, y, 3, color, [], dark));
+          if (series.length > 1) {
+            label(ctx, name, legend, top - 9, color, 'left', 10);
+            legend += name.length * 6.8 + 12;
+          }
+        });
+        if (point) circle(ctx, px(point[0]), py(point[1]), 4, '#fff2df', [], orange);
+        label(ctx, spec.x, right, h - 10, ink, 'right', 9);
+      }
+    });
+  }
+
+  root.SoftneerDraw = { plot, catalogPreview, chart };
 })(globalThis);
